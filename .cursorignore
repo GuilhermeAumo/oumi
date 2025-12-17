@@ -1,0 +1,21 @@
+# Keep Cursor indexing fast and relevant (skip generated / bulky dirs)
+build/
+dist/
+coverage_html/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+**/__pycache__/
+**/*.pyc
+src/oumi.egg-info/
+
+# Docs build artifacts
+docs/_build/
+
+# Common virtual envs
+.venv/
+venv/
+
+# Local notebooks outputs (optional)
+**/.ipynb_checkpoints/

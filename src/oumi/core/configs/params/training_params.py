@@ -398,6 +398,16 @@ class TrainingParams(BaseParams):
     If True, the example will be logged to the console.
     """
 
+    log_masks_first_example: bool = False
+    """If True, write a detailed mask/token debug log for the first training example.
+
+    The log is written once (rank 0 only) to `training.output_dir` and includes:
+    - The original first sample as returned by the dataset
+    - The formatted (chat-templated) sample text (non-tokenized)
+    - Token-level details: (token id, decoded token text, attention mask, training mask)
+    - A mask-separated rendering of the sample, split into trained vs non-trained spans
+    """
+
     enable_wandb: bool = False
     """Whether to enable Weights & Biases (wandb) logging.
 

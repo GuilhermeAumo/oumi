@@ -63,6 +63,7 @@ from oumi.core.processors.base_processor import BaseProcessor
 from oumi.core.tokenizers import BaseTokenizer
 from oumi.core.trainers import BaseTrainer
 from oumi.performance.torch_profiler_utils import torch_profile
+from oumi.utils.debug_utils import write_masks_first_example_debug_file
 from oumi.utils.device_utils import (
     log_nvidia_gpu_runtime_info,
 )
@@ -397,6 +398,96 @@ def train(
     collator: Optional[Callable] = build_collator_from_config(
         config, tokenizer, debug=config.training.log_examples
     )
+
+    # Optional: Write a detailed masks debug log for the first training example.
+    # This is best-effort and must not crash training.
+    if (
+        config.training.log_masks_first_example
+        and tokenizer is not None
+        and is_world_process_zero()
+    ):
+        try:
+            first_example = next(iter(train_dataset))
+
+            # Attempt to get formatted (non-tokenized) template text.
+            formatted_text = ""
+            if isinstance(first_example, dict):
+                if (
+                    "conversation_json" in first_example
+                    and first_example["conversation_json"]
+                ):
+                    from oumi.core.types.conversation import Conversation
+
+                    convo = Conversation.from_json(first_example["conversation_json"])
+                    formatted_text = tokenizer.apply_chat_template(
+                        convo.messages,  # type: ignore
+                        tokenize=False,
+                        add_generation_prompt=False,
+                    )
+                elif "messages" in first_example:
+                    formatted_text = tokenizer.apply_chat_template(
+                        first_example["messages"],  # type: ignore
+                        tokenize=False,
+                        add_generation_prompt=False,
+                    )
+
+            # Fall back to decoding input_ids if we can't apply a template.
+            if (
+                not formatted_text
+                and isinstance(first_example, dict)
+                and "input_ids" in first_example
+            ):
+                formatted_text = tokenizer.decode(
+                    first_example["input_ids"], skip_special_tokens=False
+                )
+
+            # If we have a collator and token ids, use it to get the exact model inputs
+            # (padding, attention mask, etc).
+            model_input_ids = None
+            model_attention_mask = None
+            model_labels = None
+            if isinstance(first_example, dict) and "input_ids" in first_example:
+                if collator is not None:
+                    batch_out = collator([first_example])
+                    # Batch tensors: select first example.
+                    model_input_ids = batch_out.get("input_ids")[0]
+                    model_attention_mask = (
+                        batch_out.get("attention_mask")[0]
+                        if batch_out.get("attention_mask") is not None
+                        else None
+                    )
+                    model_labels = (
+                        batch_out.get("labels")[0]
+                        if batch_out.get("labels") is not None
+                        else None
+                    )
+                else:
+                    model_input_ids = first_example.get("input_ids")
+                    model_attention_mask = first_example.get("attention_mask")
+                    model_labels = first_example.get("labels")
+
+            if model_input_ids is not None:
+                out_path = write_masks_first_example_debug_file(
+                    output_dir=config.training.output_dir,
+                    raw_example=first_example,
+                    tokenizer=tokenizer,
+                    formatted_example_text=str(formatted_text or ""),
+                    input_ids=model_input_ids,
+                    attention_mask=model_attention_mask,
+                    labels=model_labels,
+                    label_ignore_index=config.training.label_ignore_index,
+                )
+                logger.info(f"Wrote first-example masks debug log to: {out_path}")
+            else:
+                logger.warning(
+                    "Skipping first-example masks debug log because the dataset example"
+                    " does not include `input_ids`."
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to write first-example masks debug log (continuing training): \
+{e}"
+            )
 
     training_kwargs = _create_optional_training_kwargs(
         config,

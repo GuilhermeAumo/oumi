@@ -1,0 +1,31 @@
+---
+alwaysApply: true
+description: Basic Cursor AI instructions for this repo (Oumi)
+globs:
+  - "**/*.py"
+  - "**/*.md"
+  - "**/*.yaml"
+  - "**/*.yml"
+  - "Makefile"
+---
+
+You are working in the **Oumi** repo (Python, `pyproject.toml`, `src/oumi`, `tests/`).
+
+## Workflow (preferred commands)
+- Use **Makefile targets** when possible:
+  - `make format` (uses Ruff formatter)
+  - `make check` (runs pre-commit hooks)
+  - `make test` (pytest)
+- Keep changes minimal and focused; update or add tests when behavior changes.
+
+## Style & correctness
+- Formatting is **Ruff** (line length 88) and lint rules are configured in `pyproject.toml`.
+- Prefer **absolute imports** (relative imports are disallowed by Ruff config).
+- For public APIs: keep docstrings in **Google** style when adding new ones.
+
+## Repo hygiene
+- Do **not** edit generated artifacts (e.g. `build/`, `docs/_build/`, `src/oumi.egg-info/`).
+- Prefer editing source under `src/oumi/` and tests under `tests/`.
+
+## When running commands
+- If you need to run repo checks, use `make format`, `make check`, and `make test` (in that order).
