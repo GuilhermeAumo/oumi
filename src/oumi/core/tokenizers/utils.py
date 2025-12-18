@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
+import json
+from typing import Any, Optional
 
 import numpy as np
 import transformers
@@ -22,6 +25,58 @@ from oumi.core.types import Conversation
 from oumi.utils.logging import logger
 
 
+def _chat_template_mentions_tool_calls(chat_template: Optional[str]) -> bool:
+    if not chat_template:
+        return False
+    # Simple heuristic: if the template explicitly references tool calls,
+    # assume it knows how to render them and don't inject into `content`.
+    return ("tool_calls" in chat_template) or ("tool_call_id" in chat_template)
+
+
+def materialize_tool_calls_in_messages(
+    *,
+    messages: list[dict[str, Any]],
+    chat_template: Optional[str],
+) -> list[dict[str, Any]]:
+    """Optionally inject tool call JSON into assistant content for training.
+
+    If the template doesn't appear to mention tool calls, OpenAI-format tool calls
+    (assistant `tool_calls` with empty `content`) would be invisible in the rendered
+    prompt. In that case we inject `json.dumps(tool_calls)` into assistant `content`
+    only when `content` is empty/None.
+    """
+    result = copy.deepcopy(messages)
+    if _chat_template_mentions_tool_calls(chat_template):
+        return result
+
+    for msg in result:
+        if msg.get("role") != "assistant":
+            continue
+        tool_calls = msg.get("tool_calls")
+        if not tool_calls:
+            continue
+        content = msg.get("content")
+        if content is None or (isinstance(content, str) and len(content.strip()) == 0):
+            msg["content"] = json.dumps(tool_calls, ensure_ascii=False)
+
+    return result
+
+
+def conversation_messages_for_chat_template(
+    *, tokenizer: BaseTokenizer, conversation: Conversation
+) -> list[dict[str, Any]]:
+    """Convert an Oumi Conversation into HF chat-template messages."""
+    convo_dict: dict[str, Any] = conversation.to_dict()
+    messages = convo_dict.get("messages", [])
+    if not isinstance(messages, list):
+        raise ValueError("Conversation.to_dict()['messages'] is not a list.")
+    messages = [m for m in messages if isinstance(m, dict)]
+    return materialize_tool_calls_in_messages(
+        messages=messages,
+        chat_template=getattr(tokenizer, "chat_template", None),
+    )
+
+
 #
 # Base class functions
 #
@@ -29,8 +84,11 @@ def tokenize_for_completions_only_training_with_template(
     tokenizer: BaseTokenizer, conversation: Conversation
 ) -> dict:
     """Tokenize a conversation for completions-only training with a template."""
+    messages = conversation_messages_for_chat_template(
+        tokenizer=tokenizer, conversation=conversation
+    )
     batch: transformers.BatchEncoding = tokenizer.apply_chat_template(
-        conversation=conversation,  # type: ignore
+        conversation=messages,  # type: ignore
         tokenize=True,
         return_dict=True,
         return_assistant_tokens_mask=True,
@@ -57,8 +115,11 @@ def tokenize_for_completions_only_training_with_prefix(
     instruction_token_ids: list[int],
 ) -> dict:
     """Tokenize a conversation for completions-only training with a prefix."""
+    messages = conversation_messages_for_chat_template(
+        tokenizer=tokenizer, conversation=conversation
+    )
     prompt: str = tokenizer.apply_chat_template(
-        conversation=conversation,  # type: ignore
+        conversation=messages,  # type: ignore
         tokenize=False,
         return_dict=False,
         return_assistant_tokens_mask=False,
@@ -241,8 +302,11 @@ def tokenizer_for_inference(
     tokenizer: BaseTokenizer, conversation: Conversation
 ) -> dict:
     """Tokenize a conversation for inference."""
+    messages = conversation_messages_for_chat_template(
+        tokenizer=tokenizer, conversation=conversation
+    )
     return tokenizer.apply_chat_template(
-        conversation=conversation,  # type: ignore
+        conversation=messages,  # type: ignore
         tokenize=True,
         return_dict=True,
     )

@@ -149,6 +149,59 @@ class ContentItemCounts(NamedTuple):
     """The number of image content items in a message."""
 
 
+class ToolCallFunction(pydantic.BaseModel):
+    """Represents the function details within a tool call."""
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    name: str
+    """The name of the function to call."""
+
+    arguments: Any
+    """The arguments to pass to the function.
+
+    Can be a JSON string, dictionary, or any other type.
+    HuggingFace chat templates (like Llama 3.1) expect this to be a JSON string.
+    We accept Any to be robust against data corruption during Arrow serialization.
+    """
+
+    @pydantic.field_serializer("arguments")
+    def _serialize_arguments(self, value: Any) -> str:
+        """Serialize arguments to JSON string for HuggingFace compatibility.
+
+        HuggingFace chat templates (Llama 3.1, etc.)
+        expect tool_calls.function.arguments
+        to be a JSON string, not a dictionary.
+        """
+        import json
+
+        if isinstance(value, str):
+            return value
+        return json.dumps(value)
+
+
+class ToolCall(pydantic.BaseModel):
+    """Represents a tool/function call made by the assistant.
+
+    This follows the OpenAI tool call format used by many models.
+    """
+
+    model_config = pydantic.ConfigDict(frozen=True)
+
+    id: str
+    """Unique identifier for the tool call."""
+
+    type: str = "function"
+    """The type of tool call (currently only 'function' is supported)."""
+
+    function: ToolCallFunction
+    """The function to call with its arguments."""
+
+    def __repr__(self) -> str:
+        """Returns a string representation of the tool call."""
+        return f"<ToolCall: {self.function.name}({self.function.arguments})>"
+
+
 class ContentItem(pydantic.BaseModel):
     """A sub-part of `Message.content`.
 
@@ -277,7 +330,7 @@ class Message(pydantic.BaseModel):
     """A message in a conversation.
 
     This class represents a single message within a conversation, containing
-    various attributes such as role, content, identifier.
+    various attributes such as role, content, identifier, and tool calls.
     """
 
     model_config = pydantic.ConfigDict(frozen=True)
@@ -302,6 +355,19 @@ class Message(pydantic.BaseModel):
 
     role: Role
     """The role of the entity sending the message (e.g., user, assistant, system)."""
+
+    tool_calls: Optional[list[ToolCall]] = None
+    """Optional list of tool calls for assistant messages.
+
+    When the assistant decides to call one or more tools/functions, this field
+    contains the details of each tool call including the function name and arguments.
+    """
+
+    tool_call_id: Optional[str] = None
+    """For tool role messages, the ID of the tool call being responded to.
+
+    This links the tool response back to the original tool call made by the assistant.
+    """
 
     def model_post_init(self, __context) -> None:
         """Post-initialization method for the Message model.
@@ -448,9 +514,12 @@ class Message(pydantic.BaseModel):
         id_str = ""
         if self.id:
             id_str = f"{self.id} - "
-        return f"{id_str}{self.role.upper()}: " + " | ".join(
-            [repr(item) for item in self._iter_all_content_items()]
-        )
+        parts = [repr(item) for item in self._iter_all_content_items()]
+        if self.tool_calls:
+            parts.append(f"[tool_calls: {len(self.tool_calls)}]")
+        if self.tool_call_id:
+            parts.append(f"[tool_call_id: {self.tool_call_id}]")
+        return f"{id_str}{self.role.upper()}: " + " | ".join(parts)
 
 
 class Conversation(pydantic.BaseModel):
@@ -466,7 +535,7 @@ class Conversation(pydantic.BaseModel):
     messages: list[Message]
     """List of Message objects that make up the conversation."""
 
-    metadata: dict[str, Any] = pydantic.Field(default_factory=dict)
+    metadata: dict[str, Any] = {}
     """Optional metadata associated with the conversation.
 
     This attribute allows for storing additional information about the conversation

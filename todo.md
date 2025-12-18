@@ -1,0 +1,1 @@
+- Garantir que iterable dataset funciona tbm src/oumi/core/datasets/base_iterable_dataset.py

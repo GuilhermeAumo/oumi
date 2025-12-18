@@ -22,6 +22,7 @@ from typing_extensions import override
 from oumi.core.datasets.base_map_dataset import BaseMapDataset
 from oumi.core.tokenizers import BaseTokenizer
 from oumi.core.tokenizers.utils import (
+    conversation_messages_for_chat_template,
     tokenize_for_completions_only_training_with_prefix,
     tokenize_for_completions_only_training_with_template,
 )
@@ -215,11 +216,13 @@ class BaseSftDataset(BaseMapDataset, ABC):
             return self._tokenize(conversation, tokenize)
 
         if self._is_template_compatible_with_completions_only_training:
+            print("Chamou tokenize_for_completions_only_training_with_template")
             return tokenize_for_completions_only_training_with_template(
                 tokenizer=self._tokenizer,
                 conversation=conversation,
             )
         else:
+            print("Chamou tokenize_for_completions_only_training_with_prefix")
             return tokenize_for_completions_only_training_with_prefix(
                 tokenizer=self._tokenizer,
                 conversation=conversation,
@@ -235,8 +238,23 @@ class BaseSftDataset(BaseMapDataset, ABC):
         if self._tokenizer is None:
             raise ValueError("Tokenizer is required for tokenization.")
 
+        # Always convert to a dict-list representation before applying the HF chat
+        # template so that extra fields (e.g., tool calls) can be materialized into
+        # the rendered text if needed.
+        if isinstance(sample, Conversation):
+            conversation = sample
+        else:
+            # `tokenize()` ensures `sample` is a Conversation, but keep this defensive.
+            conversation = Conversation.from_dict(
+                sample.to_dict() if isinstance(sample, pd.Series) else sample
+            )  # type: ignore
+
+        messages = conversation_messages_for_chat_template(
+            tokenizer=self._tokenizer, conversation=conversation
+        )
+
         results = self._tokenizer.apply_chat_template(
-            sample,  # type: ignore
+            messages,  # type: ignore
             tokenize=tokenize,
             return_dict=tokenize,
             return_tensors=self._return_tensors,

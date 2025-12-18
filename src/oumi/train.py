@@ -61,6 +61,7 @@ from oumi.core.distributed import (
 )
 from oumi.core.processors.base_processor import BaseProcessor
 from oumi.core.tokenizers import BaseTokenizer
+from oumi.core.tokenizers.utils import materialize_tool_calls_in_messages
 from oumi.core.trainers import BaseTrainer
 from oumi.performance.torch_profiler_utils import torch_profile
 from oumi.utils.debug_utils import write_masks_first_example_debug_file
@@ -425,8 +426,18 @@ def train(
                         add_generation_prompt=False,
                     )
                 elif "messages" in first_example:
+                    # Make debug formatting reflect what training sees:
+                    # if the active chat template doesn't handle tool_calls explicitly,
+                    # inject tool_calls JSON into assistant content so it renders.
+                    msgs = first_example["messages"]
+                    if isinstance(msgs, list):
+                        msgs = [m for m in msgs if isinstance(m, dict)]
+                        msgs = materialize_tool_calls_in_messages(
+                            messages=msgs,
+                            chat_template=getattr(tokenizer, "chat_template", None),
+                        )
                     formatted_text = tokenizer.apply_chat_template(
-                        first_example["messages"],  # type: ignore
+                        msgs,  # type: ignore
                         tokenize=False,
                         add_generation_prompt=False,
                     )
@@ -611,7 +622,6 @@ def train(
     ) as profiler:
         with torch.profiler.record_function("create_trainer"):
             callbacks = build_training_callbacks(config, model, profiler)
-
             trainer = create_trainer_fn(
                 model=model,
                 processing_class=tokenizer,

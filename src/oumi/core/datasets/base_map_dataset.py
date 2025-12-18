@@ -320,11 +320,15 @@ class BaseMapDataset(MapDataPipe, Sized, ABC):
 
         # If feature map isn't "optimized" then ignore it to fallback
         # to the default behavior in `from_generator()`.
-        feature_map = (
-            output_features.feature_map
-            if output_features.is_feature_map_optimized
-            else None
-        )
+        # feature_map = (
+        #     output_features.feature_map
+        #     if output_features.is_feature_map_optimized
+        #     else None
+        # )
+
+        # This is needed because without the feature map, the tool calls are not
+        # serialized correctly.
+        feature_map = output_features.feature_map
 
         start_time = time.perf_counter()
         if num_proc > 1 or (
