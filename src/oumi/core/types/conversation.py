@@ -165,20 +165,6 @@ class ToolCallFunction(pydantic.BaseModel):
     We accept Any to be robust against data corruption during Arrow serialization.
     """
 
-    @pydantic.field_serializer("arguments")
-    def _serialize_arguments(self, value: Any) -> str:
-        """Serialize arguments to JSON string for HuggingFace compatibility.
-
-        HuggingFace chat templates (Llama 3.1, etc.)
-        expect tool_calls.function.arguments
-        to be a JSON string, not a dictionary.
-        """
-        import json
-
-        if isinstance(value, str):
-            return value
-        return json.dumps(value)
-
 
 class ToolCall(pydantic.BaseModel):
     """Represents a tool/function call made by the assistant.
@@ -610,9 +596,13 @@ class Conversation(pydantic.BaseModel):
         return messages
 
     def to_dict(self):
-        """Converts the conversation to a dictionary."""
+        """Converts the conversation to a dictionary.
+
+        Uses mode="python" to keep arguments as objects (not JSON strings),
+        which is the expected format for tool calls in the OpenAI/Llama format.
+        """
         return self.model_dump(
-            mode="json", exclude_unset=True, exclude_defaults=False, exclude_none=True
+            mode="python", exclude_unset=True, exclude_defaults=False, exclude_none=True
         )
 
     def append_id_to_string(self, s: str) -> str:

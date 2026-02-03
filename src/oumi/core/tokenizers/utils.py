@@ -33,6 +33,38 @@ def _chat_template_mentions_tool_calls(chat_template: Optional[str]) -> bool:
     return ("tool_calls" in chat_template) or ("tool_call_id" in chat_template)
 
 
+def _normalize_tool_call_arguments(
+    tool_calls: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Normalize tool call arguments to ensure they are always objects.
+
+    This handles cases where Arrow serialization or other processes may have
+    converted nested dicts to JSON strings. We normalize them back to objects
+    before serialization to ensure consistent formatting.
+
+    Args:
+        tool_calls: List of tool call dictionaries.
+
+    Returns:
+        List of tool call dictionaries with normalized arguments.
+    """
+    normalized = []
+    for tool_call in tool_calls:
+        normalized_tool_call = copy.deepcopy(tool_call)
+        function = normalized_tool_call.get("function", {})
+        if isinstance(function, dict):
+            arguments = function.get("arguments")
+            if isinstance(arguments, str):
+                # Try to parse JSON string to object
+                try:
+                    function["arguments"] = json.loads(arguments)
+                except (json.JSONDecodeError, TypeError):
+                    # If parsing fails, keep as-is
+                    pass
+        normalized.append(normalized_tool_call)
+    return normalized
+
+
 def materialize_tool_calls_in_messages(
     *,
     messages: list[dict[str, Any]],
@@ -44,6 +76,9 @@ def materialize_tool_calls_in_messages(
     (assistant `tool_calls` with empty `content`) would be invisible in the rendered
     prompt. In that case we inject `json.dumps(tool_calls)` into assistant `content`
     only when `content` is empty/None.
+
+    Before serialization, tool call arguments are normalized to ensure they are
+    always objects (not JSON strings) for consistent formatting.
     """
     result = copy.deepcopy(messages)
     if _chat_template_mentions_tool_calls(chat_template):
@@ -57,7 +92,9 @@ def materialize_tool_calls_in_messages(
             continue
         content = msg.get("content")
         if content is None or (isinstance(content, str) and len(content.strip()) == 0):
-            msg["content"] = json.dumps(tool_calls, ensure_ascii=False)
+            # Normalize tool call arguments to ensure they are objects
+            normalized_tool_calls = _normalize_tool_call_arguments(tool_calls)
+            msg["content"] = json.dumps(normalized_tool_calls, ensure_ascii=False)
 
     return result
 

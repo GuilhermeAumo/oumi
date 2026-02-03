@@ -216,13 +216,11 @@ class BaseSftDataset(BaseMapDataset, ABC):
             return self._tokenize(conversation, tokenize)
 
         if self._is_template_compatible_with_completions_only_training:
-            print("Chamou tokenize_for_completions_only_training_with_template")
             return tokenize_for_completions_only_training_with_template(
                 tokenizer=self._tokenizer,
                 conversation=conversation,
             )
         else:
-            print("Chamou tokenize_for_completions_only_training_with_prefix")
             return tokenize_for_completions_only_training_with_prefix(
                 tokenizer=self._tokenizer,
                 conversation=conversation,

@@ -80,7 +80,7 @@ def _decode_token(tokenizer: BaseTokenizer, token_id: int) -> str:
 
 def _render_mask_separated_text(
     *,
-    tokens: list[tuple[int, str, bool, bool]],
+    tokens: list[tuple[int, str, bool, bool, Optional[int]]],
 ) -> str:
     """Renders a token stream split into trained vs not-trained spans."""
     if not tokens:
@@ -92,14 +92,16 @@ def _render_mask_separated_text(
     lines: list[str] = []
     current_flag: Optional[bool] = None
     current_text: str = ""
+    current_labels: list[Optional[int]] = []
 
-    for _tid, ttext, attn, train in tokens:
+    for _tid, ttext, attn, train, label_id in tokens:
         # Treat padding (attn=False) as not-trained in the human view.
         is_trained = bool(attn) and bool(train)
 
         if current_flag is None:
             current_flag = is_trained
             current_text = ""
+            current_labels = []
 
         if is_trained != current_flag:
             lines.append(_header(bool(current_flag)))
@@ -108,8 +110,10 @@ def _render_mask_separated_text(
             lines.append("")
             current_flag = is_trained
             current_text = ""
+            current_labels = []
 
         current_text += ttext
+        current_labels.append(label_id)
 
     # Flush last segment.
     lines.append(_header(bool(current_flag)))
@@ -136,8 +140,8 @@ def write_masks_first_example_debug_file(
     The file is written to `output_dir/filename` and contains:
       1) Original sample from dataset
       2) Formatted sample text (after chat template), not tokenized
-      3) Token list: (token id, decoded token, attention_mask bool, training_mask bool)
-      4) A mask-separated rendering (trained vs not trained)
+      3) Token list: (token id, decoded token, attention_mask, training_mask, label)
+      4) A mask-separated rendering (trained vs not trained), including label ids
     """
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -170,14 +174,16 @@ def write_masks_first_example_debug_file(
         else int(constants.LABEL_IGNORE_INDEX)
     )
 
-    token_tuples: list[tuple[int, str, bool, bool]] = []
+    token_tuples: list[tuple[int, str, bool, bool, Optional[int]]] = []
     for i, tid in enumerate(input_ids_list):
         decoded = _decode_token(tokenizer, int(tid))
         attn = bool(attention_list[i]) if i < len(attention_list) else True
         train_mask = True
+        label_id: Optional[int] = None
         if labels_list:
-            train_mask = int(labels_list[i]) != ignore_index
-        token_tuples.append((int(tid), decoded, attn, bool(train_mask)))
+            label_id = int(labels_list[i])
+            train_mask = label_id != ignore_index
+        token_tuples.append((int(tid), decoded, attn, bool(train_mask), label_id))
 
     mask_separated = _render_mask_separated_text(tokens=token_tuples)
 
@@ -195,14 +201,14 @@ def write_masks_first_example_debug_file(
 
         f.write(
             "### 3) Tokenized sample (token_id, decoded_token, attention_mask, \
-training_mask)\n"
+training_mask, label_id)\n"
         )
         # JSON-friendly representation.
         f.write(
             _safe_json_dumps(
                 [
-                    [tid, ttext, bool(attn), bool(train)]
-                    for (tid, ttext, attn, train) in token_tuples
+                    [tid, ttext, bool(attn), bool(train), label_id]
+                    for (tid, ttext, attn, train, label_id) in token_tuples
                 ]
             )
         )
