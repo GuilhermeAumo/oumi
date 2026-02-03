@@ -30,6 +30,7 @@ class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
         self,
         response_template: Union[str, list[int]],
         instruction_template: Optional[Union[str, list[int]]] = None,
+        tool_result_template: Optional[Union[str, list[int]]] = None,
         *args,
         mlm: bool = False,
         ignore_index: int = -100,
@@ -59,6 +60,18 @@ class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
         else:
             # The user already provides the token ids
             self.response_token_ids = response_template
+
+        # Handle tool result template for masking tool/ipython responses
+        self.tool_result_template = tool_result_template
+        if isinstance(tool_result_template, str):
+            self.tool_result_token_ids: Optional[list[int]] = self.tokenizer.encode(
+                tool_result_template, add_special_tokens=False
+            )
+        elif tool_result_template is not None:
+            # The user already provides the token ids
+            self.tool_result_token_ids = tool_result_template
+        else:
+            self.tool_result_token_ids = None
 
         if (
             not self.mlm
@@ -193,6 +206,31 @@ class DataCollatorForCompletionOnlyLM(DataCollatorForLanguageModeling):
 
                 if len(response_token_ids_idxs) < len(human_token_ids_idxs):
                     batch["labels"][i, human_token_ids_idxs[-1] :] = self.ignore_index
+
+                # Mask tool result sections if tool_result_token_ids is provided
+                if self.tool_result_token_ids:
+                    tool_result_idxs = []
+                    for tool_idx in np.where(
+                        batch["labels"][i] == self.tool_result_token_ids[0]
+                    )[0]:
+                        if (
+                            self.tool_result_token_ids
+                            == batch["labels"][i][
+                                tool_idx : tool_idx + len(self.tool_result_token_ids)
+                            ].tolist()
+                        ):
+                            tool_result_idxs.append(tool_idx)
+
+                    # Mask from each tool result to the next assistant header
+                    for tool_idx in tool_result_idxs:
+                        tool_end = len(batch["labels"][i])  # Default to end
+                        for resp_idx in response_token_ids_idxs:
+                            # resp_idx is position after assistant header
+                            resp_start = resp_idx - len(self.response_token_ids)
+                            if resp_start > tool_idx:
+                                tool_end = resp_start
+                                break
+                        batch["labels"][i, tool_idx:tool_end] = self.ignore_index
 
         if self.padding_free:
             # remove padding, `attention_mask` and add `position_ids`

@@ -85,6 +85,7 @@ class VisionLanguageSftCollator:
         train_on_completions_only: bool = False,
         response_template: Optional[str] = None,
         instruction_template: Optional[str] = None,
+        tool_result_template: Optional[str] = None,
         process_individually: bool = False,
     ):
         """Initializes the vision-language SFT collator.
@@ -177,6 +178,17 @@ class VisionLanguageSftCollator:
                     - Phi-3: "<|user|>"
                     - Llama-3: "<|start_header_id|>user<|end_header_id|>"
                     - Custom: "User: " or "Human: "
+
+            tool_result_template: The optional template string that marks the beginning
+                of tool/function call results (e.g., ipython role).
+
+                If provided, tool results will be masked (not trained on) during
+                completion-only training. This is useful for tool-use training where
+                you want the model to learn to generate tool calls but not memorize
+                tool outputs.
+
+                For example:
+                    - Llama-3 tool use: "<|start_header_id|>ipython<|end_header_id|>"
         """
         self._allow_multi_image_inputs = allow_multi_image_inputs
         self._process_individually = process_individually
@@ -198,6 +210,7 @@ class VisionLanguageSftCollator:
                 train_on_completions_only=train_on_completions_only,
                 response_template=response_template,
                 instruction_template=instruction_template,
+                tool_result_template=tool_result_template,
             )
         )
 

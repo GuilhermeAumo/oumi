@@ -150,8 +150,21 @@ def tokenize_for_completions_only_training_with_prefix(
     instruction_template: str,
     response_token_ids: list[int],
     instruction_token_ids: list[int],
+    tool_result_template: Optional[str] = None,
+    tool_result_token_ids: Optional[list[int]] = None,
 ) -> dict:
-    """Tokenize a conversation for completions-only training with a prefix."""
+    """Tokenize a conversation for completions-only training with a prefix.
+
+    Args:
+        tokenizer: The tokenizer to use.
+        conversation: The conversation to tokenize.
+        response_template: The template string for assistant responses.
+        instruction_template: The template string for user instructions.
+        response_token_ids: Token IDs of the response template.
+        instruction_token_ids: Token IDs of the instruction template.
+        tool_result_template: Optional template string for tool results (e.g., ipython).
+        tool_result_token_ids: Optional token IDs of the tool result template.
+    """
     messages = conversation_messages_for_chat_template(
         tokenizer=tokenizer, conversation=conversation
     )
@@ -201,6 +214,18 @@ def tokenize_for_completions_only_training_with_prefix(
         ):
             human_token_ids_idxs.append(human_idx)
 
+    # Also find tool result positions if provided
+    tool_result_idxs = []
+    if tool_result_token_ids:
+        for tool_idx in np.where(batch["labels"] == tool_result_token_ids[0])[0]:
+            if (
+                tool_result_token_ids
+                == batch["labels"][
+                    tool_idx : tool_idx + len(tool_result_token_ids)
+                ].tolist()
+            ):
+                tool_result_idxs.append(tool_idx)
+
     if len(human_token_ids_idxs) == 0:
         logger.warning(
             f"Could not find instruction key `{instruction_template}` in the "
@@ -228,6 +253,19 @@ def tokenize_for_completions_only_training_with_prefix(
 
     if len(response_token_ids_idxs) < len(human_token_ids_idxs):
         batch["labels"][human_token_ids_idxs[-1] :] = LABEL_IGNORE_INDEX
+
+    # Mask tool result sections (from tool result header to next assistant header)
+    for tool_idx in tool_result_idxs:
+        # Find the next assistant header after this tool result
+        tool_end = len(batch["labels"])  # Default to end
+        for resp_idx in response_token_ids_idxs:
+            # resp_idx is position after assistant header, go back to header start
+            resp_start = resp_idx - len(response_token_ids)
+            if resp_start > tool_idx:
+                tool_end = resp_start
+                break
+        # Mask from tool result header to the next assistant (or end)
+        batch["labels"][tool_idx:tool_end] = LABEL_IGNORE_INDEX
 
     return batch
 
@@ -276,21 +314,44 @@ def mask_labels_for_completions_only(
     response_token_ids: list[int],
     instruction_token_ids: list[int],
     ignore_index: int = LABEL_IGNORE_INDEX,
+    tool_result_token_ids: Optional[list[int]] = None,
 ) -> None:
     """Apply completion-only masking to labels with user and assistant templates.
 
     This strategy masks everything except assistant response content, using user
-    templates to determine the boundaries of each assistant response.
+    templates (and optionally tool result templates) to determine the boundaries
+    of each assistant response.
 
     Args:
         labels: Label array to mask
         response_token_ids: Token IDs of the response template.
         instruction_token_ids: Token IDs of the instruction template.
         ignore_index: Value to use for masked positions
+        tool_result_token_ids: Optional token IDs of the tool result template
+            (e.g., ipython role header). If provided, tool results will also be
+            masked and act as boundaries for assistant responses.
     """
     # Find all response and user positions
     response_starts = find_all_sequences(labels, response_token_ids)
     user_starts = find_all_sequences(labels, instruction_token_ids)
+
+    # Build list of all boundary positions (roles that should end assistant unmasking)
+    # Each boundary is a tuple of (template_start_position, template_length)
+    boundaries: list[tuple[int, int]] = []
+    for user_start in user_starts:
+        # user_start is position after user template, so we need to go back
+        user_template_start = user_start - len(instruction_token_ids)
+        boundaries.append((user_template_start, len(instruction_token_ids)))
+
+    # Also add tool result positions as boundaries if provided
+    if tool_result_token_ids:
+        tool_starts = find_all_sequences(labels, tool_result_token_ids)
+        for tool_start in tool_starts:
+            tool_template_start = tool_start - len(tool_result_token_ids)
+            boundaries.append((tool_template_start, len(tool_result_token_ids)))
+
+    # Sort boundaries by position
+    boundaries.sort(key=lambda x: x[0])
 
     # If no response templates found, mask everything
     if not response_starts:
@@ -305,13 +366,11 @@ def mask_labels_for_completions_only(
 
     # Unmask each assistant response (content after the template)
     for resp_start in response_starts:
-        # Find the next user template start after this response
+        # Find the next boundary (user or tool) template start after this response
         resp_end = len(labels)  # Default to end of sequence
-        for user_start in user_starts:
-            # user_start is position after user template, so we need to go back
-            user_template_start = user_start - len(instruction_token_ids)
-            if user_template_start > resp_start:
-                resp_end = user_template_start
+        for boundary_start, _ in boundaries:
+            if boundary_start > resp_start:
+                resp_end = boundary_start
                 break
 
         # Restore the original labels for the response content only

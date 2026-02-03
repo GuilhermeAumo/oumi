@@ -82,6 +82,7 @@ class VisionLanguageConversationFeatureGenerator(BaseConversationFeatureGenerato
         train_on_completions_only: bool = False,
         response_template: Optional[str] = None,
         instruction_template: Optional[str] = None,
+        tool_result_template: Optional[str] = None,
     ) -> None:
         """Initializes a new instance of VisionLanguageFeatureProcessor."""
         # Importing these here to avoid circular dependencies
@@ -102,6 +103,7 @@ class VisionLanguageConversationFeatureGenerator(BaseConversationFeatureGenerato
         self._train_on_completions_only = train_on_completions_only
         self._response_template = response_template
         self._instruction_template = instruction_template
+        self._tool_result_template = tool_result_template
 
         # Validate completion-only training configuration
         if self._train_on_completions_only:
@@ -184,6 +186,14 @@ class VisionLanguageConversationFeatureGenerator(BaseConversationFeatureGenerato
                 )
             else:
                 self._instruction_token_ids = None
+
+            # Optionally encode tool result template
+            if self._tool_result_template is not None:
+                self._tool_result_token_ids = self._processor.tokenizer.encode(
+                    self._tool_result_template, add_special_tokens=False
+                )
+            else:
+                self._tool_result_token_ids = None
 
             # Log the completion-only masking strategy being used
             if self._instruction_token_ids is not None:
@@ -518,11 +528,13 @@ class VisionLanguageConversationFeatureGenerator(BaseConversationFeatureGenerato
 
         # Choose masking strategy based on whether instruction token IDs are available
         if hasattr(self, "_instruction_token_ids") and self._instruction_token_ids:
+            tool_result_token_ids = getattr(self, "_tool_result_token_ids", None)
             mask_labels_for_completions_only(
                 labels,
                 self._response_token_ids,
                 self._instruction_token_ids,
                 ignore_index=ignore_index,
+                tool_result_token_ids=tool_result_token_ids,
             )
         else:
             mask_labels_without_user_template(

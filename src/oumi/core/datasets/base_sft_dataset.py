@@ -48,6 +48,7 @@ class BaseSftDataset(BaseMapDataset, ABC):
         assistant_only: bool = False,
         response_template: Optional[str] = None,
         instruction_template: Optional[str] = None,
+        tool_result_template: Optional[str] = None,
         return_conversations: bool = False,
         return_conversations_format: Literal["dict", "json"] = "json",
         **kwargs,
@@ -68,6 +69,7 @@ class BaseSftDataset(BaseMapDataset, ABC):
         self._assistant_only = assistant_only
         self._response_template = response_template
         self._instruction_template = instruction_template
+        self._tool_result_template = tool_result_template
         self._return_conversations = return_conversations
         self._return_conversations_format = return_conversations_format
 
@@ -228,6 +230,8 @@ class BaseSftDataset(BaseMapDataset, ABC):
                 instruction_template=cast(str, self._instruction_template),
                 response_token_ids=self.response_token_ids,
                 instruction_token_ids=self.instruction_token_ids,
+                tool_result_template=self._tool_result_template,
+                tool_result_token_ids=getattr(self, "tool_result_token_ids", None),
             )
 
     def _tokenize(
@@ -329,5 +333,20 @@ class BaseSftDataset(BaseMapDataset, ABC):
             self.instruction_token_ids = self._tokenizer.encode(
                 self._instruction_template, add_special_tokens=False
             )
+
+            # Optionally encode tool result template if provided
+            if self._tool_result_template is not None:
+                if self._tool_result_template.strip() != self._tool_result_template:
+                    logger.warning(
+                        f"Tool result template '{self._tool_result_template}' contains "
+                        "leading or trailing whitespaces. These will be ignored."
+                    )
+                    self._tool_result_template = self._tool_result_template.strip()
+
+                self.tool_result_token_ids = self._tokenizer.encode(
+                    self._tool_result_template, add_special_tokens=False
+                )
+            else:
+                self.tool_result_token_ids = None
 
             self._is_template_compatible_with_completions_only_training = False
